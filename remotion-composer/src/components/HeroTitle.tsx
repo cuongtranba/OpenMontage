@@ -17,6 +17,8 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({ title, subtitle }) => {
 
   // Staggered letter-by-letter spring
   const titleChars = title.split("");
+  const firstSpace = title.indexOf(" ");
+  const firstWordEnd = firstSpace === -1 ? title.length : firstSpace;
 
   return (
     <AbsoluteFill
@@ -56,7 +58,7 @@ export const HeroTitle: React.FC<HeroTitleProps> = ({ title, subtitle }) => {
                   display: "inline-block",
                   opacity: charSpring,
                   transform: `translateY(${interpolate(charSpring, [0, 1], [30, 0])}px)`,
-                  color: i < 8 ? "#22D3EE" : "#F8FAFC", // Accent first word
+                  color: i < firstWordEnd ? "#22D3EE" : "#F8FAFC", // Accent first word
                   whiteSpace: char === " " ? "pre" : undefined,
                   minWidth: char === " " ? "0.3em" : undefined,
                 }}
