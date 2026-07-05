@@ -1,7 +1,5 @@
 """Tests for the TikTok client module (no live API calls)."""
 
-import json
-import os
 import sys
 from pathlib import Path
 

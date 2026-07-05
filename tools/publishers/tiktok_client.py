@@ -8,6 +8,7 @@ sandbox API on 2026-07-05 (see docs/superpowers/specs/2026-07-05-tiktok-publishe
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -46,8 +47,10 @@ class TikTokTokens:
 
     def save(self, path: Path = DEFAULT_TOKEN_PATH) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
-        path.chmod(0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(asdict(self), indent=2))
+        path.chmod(0o600)  # ensure mode even if the file pre-existed
 
     @staticmethod
     def load(path: Path = DEFAULT_TOKEN_PATH) -> "TikTokTokens":
