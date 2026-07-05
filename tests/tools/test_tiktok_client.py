@@ -17,6 +17,7 @@ from tools.publishers.tiktok_client import (
     TikTokClient,
     TikTokTokens,
     TokenStore,
+    exchange_code,
     plan_chunks,
     refresh_tokens,
 )
@@ -219,3 +220,14 @@ def test_wait_for_publish_returns_failed():
     with patch("tools.publishers.tiktok_client.requests.post", return_value=_json_response(payload)):
         final = _client().wait_for_publish("pid", timeout_sec=10, poll_interval_sec=0)
     assert final == "FAILED"
+
+
+def test_exchange_code_sends_authorization_code_grant():
+    payload = {"access_token": "at", "refresh_token": "rt", "open_id": "oid", "expires_in": 86400}
+    with patch("tools.publishers.tiktok_client.requests.post", return_value=_json_response(payload)) as post:
+        tokens = exchange_code("key", "secret", "the_code", "https://cb.example/callback/")
+    assert tokens.access_token == "at"
+    sent = post.call_args.kwargs["data"]
+    assert sent["grant_type"] == "authorization_code"
+    assert sent["code"] == "the_code"
+    assert sent["redirect_uri"] == "https://cb.example/callback/"
