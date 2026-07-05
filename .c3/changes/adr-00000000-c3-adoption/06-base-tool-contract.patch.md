@@ -1,0 +1,44 @@
+---
+target: c3-102
+scope: whole
+type: component
+parent: c3-1
+title: BaseTool Contract
+category: Foundation
+---
+## Goal
+
+One execution contract every production tool implements.
+
+## Parent Fit
+
+| Field | Value |
+|---|---|
+| Container | c3-1 Production Engine |
+| Category | Foundation |
+| Code | tools/base_tool.py |
+| Depended on by | all ~100 tools, the registry, cost tracking |
+
+## Purpose
+
+Abstract base class defining the ToolContract: identity metadata (name, tier, capability, provider, runtime, stability), dependency declaration with prefix checks (env:/cmd:/python:), status reporting (AVAILABLE/UNAVAILABLE via check_dependencies), execute(inputs) returning ToolResult, dry_run, cost/runtime estimation, and dotenv loading (.env then .env.local) at import. Not responsible for tool discovery (registry) or provider choice (selectors).
+
+## Governance
+
+| Reference | Type | Governs | Precedence | Notes |
+|---|---|---|---|---|
+| rule-tool-contract | rule | Class naming, execute/ToolResult shape, metadata fields | binding | This component is the rule's enforcement point |
+
+## Contract
+
+| Surface | Direction | Contract | Boundary | Evidence |
+|---|---|---|---|---|
+| execute(inputs: dict) -> ToolResult | IN/OUT | ToolResult carries .success, .data, .error, .artifacts; never raises for expected failures | Python API | tools/base_tool.py |
+| get_status() / check_dependencies() | OUT | UNAVAILABLE with install_instructions when any env:/cmd:/python: dependency is missing | Python API | tools/base_tool.py |
+| get_info() | OUT | Full contract dict (status, capability, best_for, install_instructions, agent_skills) for the registry | Python API | tools/base_tool.py |
+
+## Derived Materials
+
+| Material | Must derive from | Allowed variance | Evidence |
+|---|---|---|---|
+| Every tool class under tools/ | Contract — execute(inputs) and get_info() surfaces | Tool-specific inputs/outputs schemas | tools/publishers/export_bundle.py |

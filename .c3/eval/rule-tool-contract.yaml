@@ -1,0 +1,5 @@
+fact: rule-tool-contract
+claim: "All production tools subclass BaseTool, PascalCase names without Tool suffix, execute returns ToolResult"
+code:
+  - tools/base_tool.py
+  - tools/publishers/export_bundle.py

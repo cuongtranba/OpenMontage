@@ -1,0 +1,9 @@
+fact: c3-110
+claim: "Provider tools across capability families plus capability selectors"
+code:
+  - tools/audio/**
+  - tools/video/**
+  - tools/audio/**
+  - tools/graphics/**
+  - tools/publishers/**
+  - tools/analysis/**

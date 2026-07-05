@@ -1,0 +1,4 @@
+fact: c3-101
+claim: "Tool registry discovers tools and reports capability/provider catalogs"
+code:
+  - tools/tool_registry.py

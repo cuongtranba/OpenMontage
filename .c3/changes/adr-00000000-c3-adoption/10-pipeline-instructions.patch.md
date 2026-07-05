@@ -1,0 +1,46 @@
+---
+target: c3-111
+scope: whole
+type: component
+parent: c3-1
+title: Pipeline Manifests & Director Skills
+category: Feature
+---
+## Goal
+
+The declarative instruction set the agent executes.
+
+## Parent Fit
+
+| Field | Value |
+|---|---|
+| Container | c3-1 Production Engine |
+| Category | Feature |
+| Code | pipeline_defs/, skills/pipelines/, skills/meta/, skills/core/, skills/creative/, .agents/skills/, styles/ |
+| Depended on by | the orchestrating agent — this IS its program |
+
+## Purpose
+
+Twelve pipeline manifests (YAML) declaring stages, tools_available, review focus, success criteria, and binding human_approval_default per stage; a director skill (markdown) per stage teaching HOW to produce its canonical artifact; meta skills (reviewer, checkpoint-protocol, onboarding); Layer 3 vendor skills in .agents/skills/; style playbooks in styles/. Adding a pipeline = manifest + director skills, no engine code. Not responsible for execution mechanics — tools and lib/ are.
+
+## Governance
+
+| Reference | Type | Governs | Precedence | Notes |
+|---|---|---|---|---|
+| ref-instruction-layering | ref | The three-layer reading order (registry → Layer 2 → Layer 3) | binding | Skills are preferred over source code for tool usage |
+| rule-project-workspace | rule | Where stage outputs land | binding | Director skills must instruct explicit output_path |
+
+## Contract
+
+| Surface | Direction | Contract | Boundary | Evidence |
+|---|---|---|---|---|
+| pipeline_defs/<pipeline>.yaml | OUT | Schema-valid manifest: stages, produces, tools_available, human_approval_default | YAML + JSON schema | schemas/pipelines/pipeline_manifest.schema.json |
+| skills/pipelines/<pipeline>/<stage>-director.md | OUT | Quality bar, workflow, and review criteria for one stage | Markdown read by the agent | skills/pipelines/explainer/script-director.md |
+| tool agent_skills field | IN | Names the Layer 3 skills an agent must read before calling the tool | Registry metadata | tools/tool_registry.py |
+
+## Derived Materials
+
+| Material | Must derive from | Allowed variance | Evidence |
+|---|---|---|---|
+| Stage canonical artifacts | Contract — skills/pipelines/<pipeline>/<stage>-director.md surface | Creative content varies; structure does not | schemas/artifacts/__init__.py |
+| Agent behavior in a run | Contract — pipeline_defs/<pipeline>.yaml surface (binding gates) | None on gates; judgment within skill guidance | AGENT_GUIDE.md |
