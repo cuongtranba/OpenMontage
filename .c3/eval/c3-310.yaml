@@ -1,0 +1,5 @@
+fact: c3-310
+claim: "Remotion scene types and renderers invoked by video_compose"
+code:
+  - remotion-composer/src/*.tsx
+  - remotion-composer/src/**

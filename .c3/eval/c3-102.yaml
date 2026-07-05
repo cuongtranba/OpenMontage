@@ -1,0 +1,4 @@
+fact: c3-102
+claim: "BaseTool contract with execute/ToolResult and dependency checks"
+code:
+  - tools/base_tool.py

@@ -1,0 +1,4 @@
+fact: rule-project-workspace
+claim: "All run outputs live under projects/<id>/ created by init_project"
+code:
+  - lib/checkpoint.py

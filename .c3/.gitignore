@@ -1,0 +1,12 @@
+# BEGIN C3 MANAGED IGNORE
+c3.db
+c3.db-shm
+c3.db-wal
+c3.db.bak
+c3.db.bak-*
+.c3.import.tmp.db
+.c3.import.tmp.db-*
+*.tmp.db
+*.tmp.db-*
+# END C3 MANAGED IGNORE
+

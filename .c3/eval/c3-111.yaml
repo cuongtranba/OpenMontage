@@ -1,0 +1,6 @@
+fact: c3-111
+claim: "Pipeline manifests and stage director skills the agent executes"
+code:
+  - pipeline_defs/*.yaml
+  - skills/pipelines/**
+  - skills/meta/**

@@ -1,0 +1,6 @@
+fact: ref-selector-pattern
+claim: "Selectors route capabilities via registry discovery"
+code:
+  - tools/audio/tts_selector.py
+  - tools/graphics/image_selector.py
+  - tools/video/video_selector.py

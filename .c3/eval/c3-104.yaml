@@ -1,0 +1,6 @@
+fact: c3-104
+claim: "JSON schemas for every canonical artifact, checkpoint, manifest, and playbook"
+code:
+  - schemas/artifacts/*.schema.json
+  - schemas/checkpoints/*.schema.json
+  - schemas/pipelines/*.schema.json

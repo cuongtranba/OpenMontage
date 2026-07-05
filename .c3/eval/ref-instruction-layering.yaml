@@ -1,0 +1,5 @@
+fact: ref-instruction-layering
+claim: "Three-layer knowledge model: registry, Layer 2 skills, Layer 3 vendor skills"
+code:
+  - AGENT_GUIDE.md
+  - .agents/skills/**

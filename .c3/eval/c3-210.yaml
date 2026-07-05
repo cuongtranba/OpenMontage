@@ -1,0 +1,4 @@
+fact: c3-210
+claim: "Backlot server + board UI rendering run state from disk"
+code:
+  - backlot/**
