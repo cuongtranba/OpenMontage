@@ -165,6 +165,7 @@ class TestCapabilityMetadata:
             "dashscope",
             "doubao",
             "elevenlabs",
+            "fpt",
             "google_tts",
             "openai",
             "piper",

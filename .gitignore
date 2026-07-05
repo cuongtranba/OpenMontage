@@ -97,3 +97,6 @@ venv/
 
 # Backlot local cache (thumbnails)
 .backlot/
+
+# Git worktrees (isolated feature workspaces)
+.worktrees/
