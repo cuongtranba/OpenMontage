@@ -155,3 +155,47 @@ def test_advance_routes_decisions(proj: tuple[str, Path]):
                human_approved=True, decisions=decisions)
     cur = read_current_decisions(pid, pipeline_dir=pdir)
     assert cur[("voice_selection", "Narration TTS provider")]["selected"] == "openai_onyx"
+
+
+import io
+import contextlib
+
+from lib.pipeline_executor import main
+
+
+def _run_cli(argv: list[str]) -> dict:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = main(argv)
+    assert code == 0, buf.getvalue()
+    return json.loads(buf.getvalue())
+
+
+def test_cli_next(proj: tuple[str, Path]):
+    pid, pdir = proj
+    out = _run_cli(["next", pid, PIPELINE, "--projects-dir", str(pdir)])
+    assert out["stage"] == "research"
+
+
+def test_cli_advance_walk(proj: tuple[str, Path], tmp_path: Path):
+    pid, pdir = proj
+    _run_cli(["next", pid, PIPELINE, "--projects-dir", str(pdir)])
+    art = tmp_path / "rb.json"
+    art.write_text(json.dumps({"research_brief": RESEARCH_BRIEF}))
+    out = _run_cli(["advance", pid, PIPELINE, "--projects-dir", str(pdir),
+                    "--status", "completed", "--artifact-file", str(art),
+                    "--human-approved"])
+    assert out["stage"] == "script"
+
+
+def test_cli_gate_violation_exit_1(proj: tuple[str, Path], tmp_path: Path):
+    pid, pdir = proj
+    _run_cli(["next", pid, PIPELINE, "--projects-dir", str(pdir)])
+    art = tmp_path / "rb.json"
+    art.write_text(json.dumps({"research_brief": RESEARCH_BRIEF}))
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        code = main(["advance", pid, PIPELINE, "--projects-dir", str(pdir),
+                     "--status", "completed", "--artifact-file", str(art)])
+    assert code == 1
+    assert "GATE VIOLATION" in buf.getvalue()

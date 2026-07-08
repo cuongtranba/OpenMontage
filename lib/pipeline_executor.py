@@ -536,3 +536,74 @@ class PipelineExecutor:
         """Send event to progress_sink if configured."""
         if self._progress_sink is not None:
             self._progress_sink(event)
+
+
+def _load_json(path: Optional[str]) -> Any:
+    if not path:
+        return None
+    import json as _json
+    with open(path, encoding="utf-8") as f:
+        return _json.load(f)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """CLI entrypoint: ``next`` and ``advance`` subcommands (JSON to stdout)."""
+    import argparse
+    import json as _json
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m lib.pipeline_executor")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def _common(p: "argparse.ArgumentParser") -> None:
+        p.add_argument("project_id")
+        p.add_argument("pipeline_type")
+        p.add_argument("--projects-dir", default=None)
+        p.add_argument("--defs-dir", default=None)
+
+    p_next = sub.add_parser("next")
+    _common(p_next)
+
+    p_adv = sub.add_parser("advance")
+    _common(p_adv)
+    p_adv.add_argument("--status", required=True,
+                       choices=["completed", "awaiting_human", "failed", "retry"])
+    p_adv.add_argument("--artifact-file", default=None)
+    p_adv.add_argument("--decisions-file", default=None)
+    p_adv.add_argument("--review-file", default=None)
+    p_adv.add_argument("--cost-file", default=None)
+    p_adv.add_argument("--human-approved", action="store_true")
+    p_adv.add_argument("--error", default=None)
+
+    args = parser.parse_args(argv)
+
+    ex = PipelineExecutor(
+        args.project_id, args.pipeline_type,
+        pipeline_dir=Path(args.projects_dir) if args.projects_dir else None,
+        defs_dir=Path(args.defs_dir) if args.defs_dir else None,
+    )
+
+    try:
+        if args.cmd == "next":
+            result = ex.next_contract()
+        else:
+            result = ex.advance(
+                status=args.status,
+                artifacts=_load_json(args.artifact_file),
+                human_approved=args.human_approved,
+                review=_load_json(args.review_file),
+                cost_snapshot=_load_json(args.cost_file),
+                decisions=_load_json(args.decisions_file),
+                error=args.error,
+            )
+    except CheckpointValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
