@@ -100,3 +100,6 @@ venv/
 
 # Git worktrees (isolated feature workspaces)
 .worktrees/
+
+# OKR run-local state
+.okra/
