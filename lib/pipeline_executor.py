@@ -32,6 +32,8 @@ from lib.checkpoint import (
 from lib.pipeline_loader import (
     get_stage_human_approval_default,
     get_stage_order,
+    get_stage_review_focus,
+    get_stage_skill,
     load_pipeline_readonly,
 )
 from lib.paths import PROJECTS_DIR
@@ -365,6 +367,26 @@ class PipelineExecutor:
                 if canonical and canonical in artifacts:
                     prior[canonical] = artifacts[canonical]
         return prior
+
+    def _manifest(self) -> dict[str, Any]:
+        return load_pipeline_readonly(self._pipeline_type, self._defs_dir)
+
+    def _stage_dict(self, stage: str) -> dict[str, Any]:
+        for s in self._manifest()["stages"]:
+            if s["name"] == stage:
+                return s
+        raise KeyError(f"stage {stage!r} not in manifest {self._pipeline_type!r}")
+
+    def _max_revisions(self) -> int:
+        orch = self._manifest().get("orchestration", {})
+        return int(orch.get("max_revisions_per_stage", _DEFAULT_MAX_REVISIONS))
+
+    def _read_attempt(self, stage: str) -> int:
+        cp = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+        if cp and cp.get("status") == "in_progress":
+            meta = cp.get("metadata") or {}
+            return int(meta.get("attempt", 1))
+        return 1
 
     def _timed(
         self,
