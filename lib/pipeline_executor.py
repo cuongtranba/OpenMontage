@@ -350,6 +350,47 @@ class PipelineExecutor:
                     timings=timings,
                 )
 
+    def next_contract(self) -> dict[str, Any]:
+        """Resolve the next stage and return the agent-facing contract.
+
+        Writes/refreshes the stage's in_progress checkpoint (carrying the
+        persisted retry attempt). Returns {"done": True} when no stage
+        remains. Surfaces control-flow facts only — never skill content.
+        """
+        stage = get_next_stage(self._pipeline_dir, self._project_id, self._pipeline_type)
+        if stage is None:
+            return {"done": True}
+
+        manifest = self._manifest()
+        sd = self._stage_dict(stage)
+        attempt = self._read_attempt(stage)
+
+        existing = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+        meta: dict[str, Any] = dict((existing or {}).get("metadata") or {})
+        meta["attempt"] = attempt
+        write_checkpoint(
+            self._pipeline_dir, self._project_id, stage, "in_progress", {},
+            pipeline_type=self._pipeline_type,
+            checkpoint_policy=self._checkpoint_policy,
+            style_playbook=self._style_playbook,
+            metadata=meta,
+        )
+
+        completed = self._collect_prior_artifacts(manifest)
+        return {
+            "done": False,
+            "stage": stage,
+            "director_skill": get_stage_skill(manifest, stage),
+            "produces": sd.get("produces"),
+            "tools_available": sd.get("tools_available", []),
+            "review_focus": get_stage_review_focus(manifest, stage),
+            "success_criteria": sd.get("success_criteria", []),
+            "human_approval_default": bool(get_stage_human_approval_default(manifest, stage)),
+            "attempt": attempt,
+            "max_revisions": self._max_revisions(),
+            "prior_artifacts": sorted(completed.keys()),
+        }
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
