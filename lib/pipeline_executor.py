@@ -36,6 +36,7 @@ from lib.pipeline_loader import (
     get_stage_skill,
     load_pipeline_readonly,
 )
+from lib.decision_log import upsert_decision
 from lib.paths import PROJECTS_DIR
 
 # Default max retries when the manifest does not declare an orchestration block.
@@ -390,6 +391,92 @@ class PipelineExecutor:
             "max_revisions": self._max_revisions(),
             "prior_artifacts": sorted(completed.keys()),
         }
+
+    def advance(
+        self,
+        *,
+        status: str,
+        artifacts: Optional[dict[str, Any]] = None,
+        human_approved: bool = False,
+        review: Optional[dict[str, Any]] = None,
+        cost_snapshot: Optional[dict[str, Any]] = None,
+        decisions: Optional[list[dict[str, Any]]] = None,
+        error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Advance the current in_progress stage.
+
+        retry: bump persisted attempt; if exceeds max_revisions write failed
+        checkpoint and stop. completed/awaiting_human/failed: route decisions
+        through upsert_decision, write checkpoint (gate enforced in code).
+        Returns next contract, {"done": True}, or {"stopped": ...}.
+        """
+        stage = get_next_stage(self._pipeline_dir, self._project_id, self._pipeline_type)
+        if stage is None:
+            return {"done": True}
+
+        manifest = self._manifest()
+        gate_required = bool(get_stage_human_approval_default(manifest, stage))
+
+        if status == "retry":
+            attempt = self._read_attempt(stage) + 1
+            if attempt > self._max_revisions():
+                write_checkpoint(
+                    self._pipeline_dir, self._project_id, stage, "failed",
+                    artifacts or {}, pipeline_type=self._pipeline_type,
+                    checkpoint_policy=self._checkpoint_policy,
+                    human_approval_required=gate_required,
+                    error=f"Retries exhausted after {attempt - 1} attempts",
+                )
+                return {"stopped": "retries_exhausted", "stage": stage}
+            existing = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+            meta = dict((existing or {}).get("metadata") or {})
+            meta["attempt"] = attempt
+            write_checkpoint(
+                self._pipeline_dir, self._project_id, stage, "in_progress", {},
+                pipeline_type=self._pipeline_type,
+                checkpoint_policy=self._checkpoint_policy,
+                style_playbook=self._style_playbook, metadata=meta,
+            )
+            sd = self._stage_dict(stage)
+            return {
+                "done": False, "stage": stage,
+                "director_skill": get_stage_skill(manifest, stage),
+                "produces": sd.get("produces"),
+                "tools_available": sd.get("tools_available", []),
+                "review_focus": get_stage_review_focus(manifest, stage),
+                "success_criteria": sd.get("success_criteria", []),
+                "human_approval_default": bool(get_stage_human_approval_default(manifest, stage)),
+                "attempt": attempt, "max_revisions": self._max_revisions(),
+                "prior_artifacts": sorted(self._collect_prior_artifacts(manifest).keys()),
+            }
+
+        # Route decisions before the checkpoint.
+        for d in decisions or []:
+            upsert_decision(
+                self._project_id, stage=d["stage"], category=d["category"],
+                subject=d["subject"], selected=d["selected"],
+                options_considered=d["options_considered"], reason=d["reason"],
+                pipeline_dir=self._pipeline_dir,
+                user_visible=d.get("user_visible", True),
+                user_approved=d.get("user_approved", False),
+                confidence=d.get("confidence"),
+            )
+
+        write_checkpoint(
+            self._pipeline_dir, self._project_id, stage, status, artifacts or {},
+            pipeline_type=self._pipeline_type,
+            checkpoint_policy=self._checkpoint_policy,
+            style_playbook=self._style_playbook,
+            human_approval_required=gate_required,
+            human_approved=human_approved, review=review,
+            cost_snapshot=cost_snapshot, error=error,
+        )
+
+        if status == "awaiting_human":
+            return {"stopped": "awaiting_human", "stage": stage}
+        if status == "failed":
+            return {"stopped": "stage_failed", "stage": stage}
+        return self.next_contract()
 
     # ------------------------------------------------------------------
     # Private helpers

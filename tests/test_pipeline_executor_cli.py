@@ -84,3 +84,74 @@ def test_next_contract_done_when_all_complete(proj: tuple[str, Path]):
                          pipeline_type=PIPELINE, human_approved=True)
     ex = _ex(proj)
     assert ex.next_contract() == {"done": True}
+
+
+from lib.checkpoint import CheckpointValidationError
+from lib.decision_log import read_current_decisions
+
+
+def _complete(ex, art):
+    return ex.advance(status="completed", artifacts=art, human_approved=True)
+
+
+def test_advance_completed_returns_next(proj: tuple[str, Path]):
+    ex = _ex(proj)
+    ex.next_contract()  # enter research
+    nxt = _complete(ex, {"research_brief": RESEARCH_BRIEF})
+    assert nxt["done"] is False
+    assert nxt["stage"] == "script"
+
+
+def test_full_walk_to_done(proj: tuple[str, Path]):
+    ex = _ex(proj)
+    ex.next_contract()
+    _complete(ex, {"research_brief": RESEARCH_BRIEF})
+    _complete(ex, {"script": SCRIPT})
+    assert ex.next_contract() == {"done": True}
+
+
+def test_advance_gate_violation_raises(proj: tuple[str, Path]):
+    ex = _ex(proj)
+    ex.next_contract()
+    with pytest.raises(CheckpointValidationError):
+        ex.advance(status="completed", artifacts={"research_brief": RESEARCH_BRIEF},
+                   human_approved=False)
+
+
+def test_advance_awaiting_human_stops(proj: tuple[str, Path]):
+    pid, pdir = proj
+    ex = _ex(proj)
+    ex.next_contract()
+    r = ex.advance(status="awaiting_human", artifacts={"research_brief": RESEARCH_BRIEF})
+    assert r == {"stopped": "awaiting_human", "stage": "research"}
+    assert read_checkpoint(pdir, pid, "research")["status"] == "awaiting_human"
+
+
+def test_retry_increments_then_exhausts(proj: tuple[str, Path]):
+    pid, pdir = proj
+    ex = _ex(proj)
+    ex.next_contract()                       # attempt 1
+    r1 = ex.advance(status="retry")
+    assert r1["stage"] == "research" and r1["attempt"] == 2
+    r2 = ex.advance(status="retry")
+    assert r2["attempt"] == 3
+    r3 = ex.advance(status="retry")          # exceeds max_revisions=3
+    assert r3 == {"stopped": "retries_exhausted", "stage": "research"}
+    assert read_checkpoint(pdir, pid, "research")["status"] == "failed"
+
+
+def test_advance_routes_decisions(proj: tuple[str, Path]):
+    pid, pdir = proj
+    ex = _ex(proj)
+    ex.next_contract()
+    decisions = [
+        {"stage": "research", "category": "voice_selection",
+         "subject": "Narration TTS provider", "selected": "openai_onyx",
+         "options_considered": [{"option_id": "openai_onyx", "label": "OpenAI Onyx",
+                                 "score": 0.8, "reason": "clear"}],
+         "reason": "default"},
+    ]
+    ex.advance(status="completed", artifacts={"research_brief": RESEARCH_BRIEF},
+               human_approved=True, decisions=decisions)
+    cur = read_current_decisions(pid, pipeline_dir=pdir)
+    assert cur[("voice_selection", "Narration TTS provider")]["selected"] == "openai_onyx"
