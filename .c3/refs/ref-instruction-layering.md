@@ -1,6 +1,6 @@
 ---
 id: ref-instruction-layering
-c3-seal: 9b22b84a119b83b7223f6db92a52a5ab5de4e21f4e381ae47878ca9bda057bf2
+c3-seal: fe965ecfcad93f32898e0ba0b0c295b89418be0f47f989c549e133ee871aa5f6
 title: Three-Layer Instruction Model
 type: ref
 goal: 'An AI agent orchestrating ~100 tools across 12 pipelines needs consistent knowledge routing: without a standard reading order, agents improvise prompts from memory, skip provider-specific guidance, and produce measurably worse output. This ref standardizes where each kind of knowledge lives and the order it is consumed.'
@@ -29,3 +29,5 @@ The reading order, from AGENT_GUIDE.md (Layer Map):
 ```
 
 REQUIRED: check the tool's `agent_skills` field (registry metadata) and read every listed skill before authoring prompts for that tool. OPTIONAL: reading tool source, only when a skill and the tool disagree (debugging/audit exception).
+
+Control-flow decisions (stage advance, retry cap, gate enforcement) are NOT agent judgment — they are enforced mechanically by `lib/pipeline_executor.py` (c3-105), which reads only the pipeline manifest (Layer 1 registry facts) and never reads Layer 2 or Layer 3 skills.

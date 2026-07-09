@@ -32,8 +32,11 @@ from lib.checkpoint import (
 from lib.pipeline_loader import (
     get_stage_human_approval_default,
     get_stage_order,
+    get_stage_review_focus,
+    get_stage_skill,
     load_pipeline_readonly,
 )
+from lib.decision_log import upsert_decision
 from lib.paths import PROJECTS_DIR
 
 # Default max retries when the manifest does not declare an orchestration block.
@@ -348,6 +351,133 @@ class PipelineExecutor:
                     timings=timings,
                 )
 
+    def next_contract(self) -> dict[str, Any]:
+        """Resolve the next stage and return the agent-facing contract.
+
+        Writes/refreshes the stage's in_progress checkpoint (carrying the
+        persisted retry attempt). Returns {"done": True} when no stage
+        remains. Surfaces control-flow facts only — never skill content.
+        """
+        stage = get_next_stage(self._pipeline_dir, self._project_id, self._pipeline_type)
+        if stage is None:
+            return {"done": True}
+
+        manifest = self._manifest()
+        sd = self._stage_dict(stage)
+        attempt = self._read_attempt(stage)
+
+        existing = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+        meta: dict[str, Any] = dict((existing or {}).get("metadata") or {})
+        meta["attempt"] = attempt
+        write_checkpoint(
+            self._pipeline_dir, self._project_id, stage, "in_progress", {},
+            pipeline_type=self._pipeline_type,
+            checkpoint_policy=self._checkpoint_policy,
+            style_playbook=self._style_playbook,
+            metadata=meta,
+        )
+
+        completed = self._collect_prior_artifacts(manifest)
+        return {
+            "done": False,
+            "stage": stage,
+            "director_skill": get_stage_skill(manifest, stage),
+            "produces": sd.get("produces"),
+            "tools_available": sd.get("tools_available", []),
+            "review_focus": get_stage_review_focus(manifest, stage),
+            "success_criteria": sd.get("success_criteria", []),
+            "human_approval_default": bool(get_stage_human_approval_default(manifest, stage)),
+            "attempt": attempt,
+            "max_revisions": self._max_revisions(),
+            "prior_artifacts": sorted(completed.keys()),
+        }
+
+    def advance(
+        self,
+        *,
+        status: str,
+        artifacts: Optional[dict[str, Any]] = None,
+        human_approved: bool = False,
+        review: Optional[dict[str, Any]] = None,
+        cost_snapshot: Optional[dict[str, Any]] = None,
+        decisions: Optional[list[dict[str, Any]]] = None,
+        error: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Advance the current in_progress stage.
+
+        retry: bump persisted attempt; if exceeds max_revisions write failed
+        checkpoint and stop. completed/awaiting_human/failed: route decisions
+        through upsert_decision, write checkpoint (gate enforced in code).
+        Returns next contract, {"done": True}, or {"stopped": ...}.
+        """
+        stage = get_next_stage(self._pipeline_dir, self._project_id, self._pipeline_type)
+        if stage is None:
+            return {"done": True}
+
+        manifest = self._manifest()
+        gate_required = bool(get_stage_human_approval_default(manifest, stage))
+
+        if status == "retry":
+            attempt = self._read_attempt(stage) + 1
+            if attempt > self._max_revisions():
+                write_checkpoint(
+                    self._pipeline_dir, self._project_id, stage, "failed",
+                    artifacts or {}, pipeline_type=self._pipeline_type,
+                    checkpoint_policy=self._checkpoint_policy,
+                    human_approval_required=gate_required,
+                    error=f"Retries exhausted after {attempt - 1} attempts",
+                )
+                return {"stopped": "retries_exhausted", "stage": stage}
+            existing = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+            meta = dict((existing or {}).get("metadata") or {})
+            meta["attempt"] = attempt
+            write_checkpoint(
+                self._pipeline_dir, self._project_id, stage, "in_progress", {},
+                pipeline_type=self._pipeline_type,
+                checkpoint_policy=self._checkpoint_policy,
+                style_playbook=self._style_playbook, metadata=meta,
+            )
+            sd = self._stage_dict(stage)
+            return {
+                "done": False, "stage": stage,
+                "director_skill": get_stage_skill(manifest, stage),
+                "produces": sd.get("produces"),
+                "tools_available": sd.get("tools_available", []),
+                "review_focus": get_stage_review_focus(manifest, stage),
+                "success_criteria": sd.get("success_criteria", []),
+                "human_approval_default": bool(get_stage_human_approval_default(manifest, stage)),
+                "attempt": attempt, "max_revisions": self._max_revisions(),
+                "prior_artifacts": sorted(self._collect_prior_artifacts(manifest).keys()),
+            }
+
+        # Route decisions before the checkpoint.
+        for d in decisions or []:
+            upsert_decision(
+                self._project_id, stage=d["stage"], category=d["category"],
+                subject=d["subject"], selected=d["selected"],
+                options_considered=d["options_considered"], reason=d["reason"],
+                pipeline_dir=self._pipeline_dir,
+                user_visible=d.get("user_visible", True),
+                user_approved=d.get("user_approved", False),
+                confidence=d.get("confidence"),
+            )
+
+        write_checkpoint(
+            self._pipeline_dir, self._project_id, stage, status, artifacts or {},
+            pipeline_type=self._pipeline_type,
+            checkpoint_policy=self._checkpoint_policy,
+            style_playbook=self._style_playbook,
+            human_approval_required=gate_required,
+            human_approved=human_approved, review=review,
+            cost_snapshot=cost_snapshot, error=error,
+        )
+
+        if status == "awaiting_human":
+            return {"stopped": "awaiting_human", "stage": stage}
+        if status == "failed":
+            return {"stopped": "stage_failed", "stage": stage}
+        return self.next_contract()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
@@ -365,6 +495,26 @@ class PipelineExecutor:
                 if canonical and canonical in artifacts:
                     prior[canonical] = artifacts[canonical]
         return prior
+
+    def _manifest(self) -> dict[str, Any]:
+        return load_pipeline_readonly(self._pipeline_type, self._defs_dir)
+
+    def _stage_dict(self, stage: str) -> dict[str, Any]:
+        for s in self._manifest()["stages"]:
+            if s["name"] == stage:
+                return s
+        raise KeyError(f"stage {stage!r} not in manifest {self._pipeline_type!r}")
+
+    def _max_revisions(self) -> int:
+        orch = self._manifest().get("orchestration", {})
+        return int(orch.get("max_revisions_per_stage", _DEFAULT_MAX_REVISIONS))
+
+    def _read_attempt(self, stage: str) -> int:
+        cp = read_checkpoint(self._pipeline_dir, self._project_id, stage)
+        if cp and cp.get("status") == "in_progress":
+            meta = cp.get("metadata") or {}
+            return int(meta.get("attempt", 1))
+        return 1
 
     def _timed(
         self,
@@ -386,3 +536,74 @@ class PipelineExecutor:
         """Send event to progress_sink if configured."""
         if self._progress_sink is not None:
             self._progress_sink(event)
+
+
+def _load_json(path: Optional[str]) -> Any:
+    if not path:
+        return None
+    import json as _json
+    with open(path, encoding="utf-8") as f:
+        return _json.load(f)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    """CLI entrypoint: ``next`` and ``advance`` subcommands (JSON to stdout)."""
+    import argparse
+    import json as _json
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m lib.pipeline_executor")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    def _common(p: "argparse.ArgumentParser") -> None:
+        p.add_argument("project_id")
+        p.add_argument("pipeline_type")
+        p.add_argument("--projects-dir", default=None)
+        p.add_argument("--defs-dir", default=None)
+
+    p_next = sub.add_parser("next")
+    _common(p_next)
+
+    p_adv = sub.add_parser("advance")
+    _common(p_adv)
+    p_adv.add_argument("--status", required=True,
+                       choices=["completed", "awaiting_human", "failed", "retry"])
+    p_adv.add_argument("--artifact-file", default=None)
+    p_adv.add_argument("--decisions-file", default=None)
+    p_adv.add_argument("--review-file", default=None)
+    p_adv.add_argument("--cost-file", default=None)
+    p_adv.add_argument("--human-approved", action="store_true")
+    p_adv.add_argument("--error", default=None)
+
+    args = parser.parse_args(argv)
+
+    ex = PipelineExecutor(
+        args.project_id, args.pipeline_type,
+        pipeline_dir=Path(args.projects_dir) if args.projects_dir else None,
+        defs_dir=Path(args.defs_dir) if args.defs_dir else None,
+    )
+
+    try:
+        if args.cmd == "next":
+            result = ex.next_contract()
+        else:
+            result = ex.advance(
+                status=args.status,
+                artifacts=_load_json(args.artifact_file),
+                human_approved=args.human_approved,
+                review=_load_json(args.review_file),
+                cost_snapshot=_load_json(args.cost_file),
+                decisions=_load_json(args.decisions_file),
+                error=args.error,
+            )
+    except CheckpointValidationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
