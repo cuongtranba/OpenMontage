@@ -517,6 +517,9 @@ class HyperFramesCompose(BaseTool):
             (workspace / "DESIGN.md").write_text(design_md, encoding="utf-8")
 
         # Write index.html — the main composition.
+        scene_plan = inputs.get("scene_plan") or []
+        scene_lookup = {s["id"]: s for s in scene_plan if s.get("id")}
+
         total_duration = self._compute_total_duration(resolved_cuts)
         html = self._generate_index_html(
             cuts=resolved_cuts,
@@ -527,6 +530,7 @@ class HyperFramesCompose(BaseTool):
             css_vars=css_vars,
             title=edit_decisions.get("metadata", {}).get("title")
             or f"OpenMontage {edit_decisions.get('renderer_family', 'composition')}",
+            scene_lookup=scene_lookup,
         )
         (workspace / "index.html").write_text(html, encoding="utf-8")
 
@@ -941,6 +945,7 @@ class HyperFramesCompose(BaseTool):
         total_duration: float,
         css_vars: dict[str, str],
         title: str,
+        scene_lookup: dict[str, dict] | None = None,
     ) -> str:
         """Emit a HyperFrames-contract-compliant index.html.
 
@@ -960,7 +965,7 @@ class HyperFramesCompose(BaseTool):
         clip_html: list[str] = []
         entrance_tweens: list[str] = []
         for i, cut in enumerate(cuts):
-            html, tween = self._cut_to_html(i, cut, width, height)
+            html, tween = self._cut_to_html(i, cut, width, height, scene_lookup)
             clip_html.append(html)
             if tween:
                 entrance_tweens.append(tween)
@@ -1007,8 +1012,10 @@ class HyperFramesCompose(BaseTool):
       overflow: hidden;
     }}
     .clip {{ position: absolute; inset: 0; }}
-    .clip.video-clip, .clip.image-clip {{ object-fit: cover; width: 100%; height: 100%; }}
+    .clip.video-clip {{ object-fit: cover; width: 100%; height: 100%; }}
+    .clip.image-clip {{ object-fit: contain; width: 100%; height: 100%; background: var(--color-bg); }}
     .clip.text-card {{ display: flex; align-items: center; justify-content: center; padding: 120px 160px; box-sizing: border-box; text-align: center; }}
+    .clip.procedural-hold {{ background: var(--color-bg); }}
     .clip.text-card h1 {{ font-family: var(--font-heading); font-weight: 700; font-size: 96px; line-height: 1.1; margin: 0; color: var(--color-fg); }}
     .clip.text-card .subtitle {{ font-size: 36px; margin-top: 24px; color: var(--color-accent); }}
   </style>
@@ -1030,7 +1037,12 @@ class HyperFramesCompose(BaseTool):
 """
 
     def _cut_to_html(
-        self, index: int, cut: dict, width: int, height: int
+        self,
+        index: int,
+        cut: dict,
+        width: int,
+        height: int,
+        scene_lookup: dict[str, dict] | None = None,
     ) -> tuple[str, Optional[str]]:
         """Render one cut + its entrance tween. Returns (html, tween or None)."""
         cut_id = f"cut-{index}"
@@ -1087,6 +1099,35 @@ class HyperFramesCompose(BaseTool):
             )
             return html, None
 
+        # Cut source doesn't resolve to a file — this is a procedural scene
+        # (scene_plan animation/text_card with no static asset). Look up the
+        # scene_plan entry instead of leaking cut.reason (an internal
+        # engineering note, not on-screen copy) onto the frame.
+        scene = (scene_lookup or {}).get(source)
+        if scene is not None:
+            if scene.get("type") in {"text_card", "hero_title", "callout"}:
+                on_screen_text = self._extract_on_screen_text(scene.get("description") or "")
+                if on_screen_text:
+                    html = (
+                        f'<div id="{cut_id}" class="clip text-card" '
+                        f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
+                        f'data-track-index="1"><h1>{self._escape_text(on_screen_text)}</h1></div>'
+                    )
+                    tween = (
+                        f'tl.from("#{cut_id} h1", {{ y: 40, opacity: 0, duration: 0.6, '
+                        f'ease: "power3.out" }}, {self._f(in_s + 0.1)});'
+                    )
+                    return html, tween
+            # Motion-only beat (animation type) or a text_card with no
+            # extractable copy — hold on a plain background card rather
+            # than showing internal notes or a blank crash-prone frame.
+            html = (
+                f'<div id="{cut_id}" class="clip procedural-hold" '
+                f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
+                f'data-track-index="1"></div>'
+            )
+            return html, None
+
         # Unknown cut shape — render a placeholder text card so the render
         # still succeeds; lint/validate will surface the issue.
         if ext in {".html", ".htm"} and src_path:
@@ -1102,13 +1143,31 @@ class HyperFramesCompose(BaseTool):
             )
             return html, None
 
-        placeholder = self._escape_text(text or cut.get("reason") or f"Scene {index + 1}")
+        placeholder = self._escape_text(text or f"Scene {index + 1}")
         html = (
             f'<div id="{cut_id}" class="clip text-card" '
             f'data-start="{self._f(in_s)}" data-duration="{self._f(duration)}" '
             f'data-track-index="1"><h1>{placeholder}</h1></div>'
         )
         return html, None
+
+    @staticmethod
+    def _extract_on_screen_text(description: str) -> str:
+        """Pull the actual on-screen copy out of a scene_plan description.
+
+        scene_plan descriptions are director's notes ("Bold full-screen text
+        'X' with a red strike-through..."); only the single-quoted span(s)
+        are meant to appear in frame. Returns "" if the description carries
+        no quoted copy (a pure motion/animation beat with nothing to render).
+        """
+        quoted = re.findall(r"'([^']+)'", description)
+        if quoted:
+            return " / ".join(quoted)
+        # No quoted copy — fall back to the clause before the first em-dash,
+        # which by convention states the on-screen subject before the
+        # director's-note clause describing how it moves.
+        lead = description.split("—", 1)[0].strip()
+        return lead if lead and len(lead) <= 60 else ""
 
     # ------------------------------------------------------------------
     # Utilities

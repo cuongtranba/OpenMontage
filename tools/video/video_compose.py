@@ -1549,6 +1549,8 @@ class VideoCompose(BaseTool):
             "edit_decisions": dict(edit_decisions, cuts=resolved_cuts),
             "asset_manifest": asset_manifest,
         }
+        if inputs.get("scene_plan"):
+            hf_inputs["scene_plan"] = inputs["scene_plan"]
         if playbook_data:
             hf_inputs["playbook"] = playbook_data
         if profile:
