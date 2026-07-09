@@ -18,6 +18,8 @@ Agent reads pipeline manifest (YAML) → reads stage director skill (MD)
 
 **No Python orchestrator, no Python reviewer, no Python handlers.** The agent drives the pipeline.
 
+**Update:** control-flow decisions (stage sequencing, retry caps, gate enforcement) are owned by `lib/pipeline_executor.py` — the agent supplies the creative work for each stage; the executor owns the state machine.
+
 ## Source of Truth
 
 - **Agent guide & contract:** `AGENT_GUIDE.md` (tool inventory, pipeline selection, stage agents, protocols)

@@ -56,6 +56,11 @@ When the user asks to make, create, produce, or generate any video content — a
 2. **Read the pipeline manifest.** `pipeline_defs/<pipeline>.yaml` — know the stages, tools, and quality gates.
 3. **Run preflight.** Discover available tools via the registry. Present the capability menu.
 4. **Execute stage by stage.** For EACH stage, read the stage director skill (`skills/pipelines/<pipeline>/<stage>-director.md`) BEFORE doing any work in that stage.
+
+   Stage sequencing is resolved by `python -m lib.pipeline_executor next` — do not
+   choose the next stage yourself. Using the executor CLI is not "ad-hoc tool
+   calling"; the prohibition below is about bypassing the pipeline with direct
+   generation-API scripts.
 5. **Read Layer 3 skills before calling tools.** Before using any tool with an `agent_skills` field, read the referenced skill in `.agents/skills/`. These contain provider-specific prompting guidance, parameter optimization, and quality techniques that dramatically improve output.
 
 **Do NOT:**
@@ -120,6 +125,12 @@ The `decision_log` is the board's Decisions rail and the run's audit trail. It i
 
 Editing only a downstream artifact (the `asset_manifest`, a prop) while leaving the old decision in the log is a defect: the board keeps showing the stale choice (e.g. `voice → openai_onyx` after the user moved to Chirp3). The board identifies a decision by its **(category, subject) pair** and renders the latest entry for that pair as current (tagged "revised") — so the fix is to append the new entry with an identical `subject`, never to silently mutate the old one or reword the subject (a reworded subject reads as a different decision and both will show). Keeping distinct decisions in one category (e.g. TTS vs image `provider_selection`) is exactly why the pair, not the category alone, is the key. This applies at every stage, not just `idea`.
 
+**In practice:** pass changed decisions to `advance --decisions-file` (or call
+`lib.decision_log.upsert_decision`). Reusing the same `(category, subject)`
+pair is enforced in code — a revision appends a new entry and moves the prior
+selection into `options_considered` automatically. Do not hand-edit
+`decision_log.json`.
+
 ### Present Both Composition Runtimes (HARD RULE)
 
 When both Remotion and HyperFrames are available on the machine (check `video_compose.get_info()["render_engines"]`), the agent **MUST present both options to the user** before locking `render_runtime` at the proposal stage. The agent MAY recommend one with rationale — but silently picking a "default" is forbidden even when the pipeline manifest or a director skill suggests one.
@@ -180,23 +191,45 @@ This applies especially to:
 
 ## Orchestrator
 
-The agent itself orchestrates the production state machine:
+The pipeline executor drives the production state machine — the agent supplies
+the creative work for each stage, the executor owns the control-flow.
 
 `research -> proposal -> script -> scene_plan -> assets -> edit -> compose`
 
-The agent:
+Interactive loop (one stage per pass):
 
-1. Reads the pipeline manifest (`pipeline_defs/*.yaml`) to know the process
-2. Calls `checkpoint.get_next_stage()` to find where to resume
-3. Reads the stage's director skill (`skills/pipelines/<pipeline>/<stage>-director.md`) to know HOW
-4. Uses tools (`tools/`) for concrete capabilities
-5. Self-reviews using the reviewer meta skill (`skills/meta/reviewer.md`)
-6. Checkpoints via the checkpoint protocol (`skills/meta/checkpoint-protocol.md`)
-7. Presents to human for approval when `human_approval_default: true`
+1. Ask the executor for the current stage:
+   `python -m lib.pipeline_executor next <project_id> <pipeline_type>`
+   It returns JSON: the `stage`, the `director_skill` to read, what it
+   `produces`, `tools_available`, `review_focus`, `success_criteria`, the
+   `human_approval_default` gate, the retry `attempt`, and `prior_artifacts`.
+   When it returns `{"done": true}` the pipeline is finished.
+2. Read the `director_skill` it named (Layer 2), then the tool's Layer 3
+   skills before calling any generation tool. Do the creative work; produce
+   the canonical artifact.
+3. Self-review (`skills/meta/reviewer.md`).
+4. Advance:
+   `python -m lib.pipeline_executor advance <project_id> <pipeline_type>
+   --status completed --artifact-file <artifact.json>
+   [--human-approved] [--decisions-file <decisions.json>]`
+   The executor writes the checkpoint (gates enforced in code), records
+   decisions via the (category, subject) invariant, and returns the next
+   stage contract — or `{"stopped": "awaiting_human"}` at a gate.
+5. At an `awaiting_human` gate: present the artifact summary, review findings,
+   and cost snapshot, then END YOUR TURN. After the user approves, re-run
+   `advance --status completed --human-approved`.
+
+To retry a stage after a failed self-review, call
+`advance --status retry`; the executor enforces the manifest's
+`max_revisions_per_stage` cap. Batch / non-interactive callers use the
+in-process `PipelineExecutor(...).run(stage_runner)` API instead.
 
 Infrastructure files:
 
-- `lib/checkpoint.py` — read/write checkpoints, stage validation
+- `lib/pipeline_executor.py` — the executor (interactive `next`/`advance` CLI
+  and in-process `run`); owns transitions, gates, and retry caps
+- `lib/checkpoint.py` — checkpoint read/write, gate enforcement
+- `lib/decision_log.py` — `upsert_decision` ((category, subject) invariant)
 - `tools/cost_tracker.py` — budget governance
 - `lib/pipeline_loader.py` — manifest loading and helpers
 
