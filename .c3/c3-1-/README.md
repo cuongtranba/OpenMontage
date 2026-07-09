@@ -1,6 +1,6 @@
 ---
 id: c3-1
-c3-seal: c749466791f56c17e3ec96ad99025a9691f760f388be6c3e2b16683b647baa3a
+c3-seal: 90fd80a0a4ade1c0e5c287b60bef3716efdbe34c0f9852bd768402e2e2b2efab
 title: Production Engine
 type: container
 parent: c3-0
@@ -19,6 +19,7 @@ The Python production engine: tool contract, registry discovery, pipeline state,
 | c3-102 | BaseTool Contract |  | active | One execution contract every production tool implements. |
 | c3-103 | Pipeline State & Checkpoints |  | active | Persist run state; enforce human approval gates. |
 | c3-104 | Artifact Schemas |  | active | Validate every canonical inter-stage artifact. |
+| c3-105 | Pipeline Executor & Decision Log |  | active | Drive stage sequencing, retry caps, gate enforcement, and decision log. |
 | c3-110 | Provider Tools & Selectors |  | active | Concrete generation and post-production capabilities behind one contract. |
 | c3-111 | Pipeline Manifests & Director Skills |  | active | The declarative instruction set the agent executes. |
 
